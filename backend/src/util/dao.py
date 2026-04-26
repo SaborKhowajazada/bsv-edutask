@@ -54,6 +54,28 @@ class DAO:
         localdata = dict(data)
 
         try:
+            # Enforce uniqueItems constraint: MongoDB's $jsonSchema does not
+            # enforce cross-document uniqueness for scalar fields. We therefore
+            # read the collection's stored validator and check manually.
+            collections_cursor = self.collection.database.list_collections(
+                filter={'name': self.collection.name}
+            )
+            collection_info = next(collections_cursor, None)
+            if collection_info:
+                schema = (
+                    collection_info
+                    .get('options', {})
+                    .get('validator', {})
+                    .get('$jsonSchema', {})
+                )
+                for field, rules in schema.get('properties', {}).items():
+                    if rules.get('uniqueItems') and field in localdata:
+                        if self.collection.find_one({field: localdata[field]}) is not None:
+                            raise pymongo.errors.WriteError(
+                                f"uniqueItems constraint violated: "
+                                f"field '{field}' already contains value '{localdata[field]}'"
+                            )
+
             # insert the object into the database
             inserted_id = self.collection.insert_one(localdata).inserted_id
 
